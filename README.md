@@ -11,6 +11,122 @@
 - 希望控制压测窗口和并发数量，避免所有机器同时打满
 - 目标环境以 CentOS 7、麒麟 V10 或类似 Linux 服务器为主
 
+## 克隆后如何使用
+
+下面以“在一台内网控制机上分发到多台目标服务器”为例。
+
+### 1. 准备控制机
+
+控制机需要能 SSH 到所有目标服务器。
+
+如果使用 SSH key 登录，确认控制机上已经能免密登录目标服务器：
+
+```bash
+ssh root@192.0.2.11
+```
+
+如果使用密码登录，控制机需要安装 `sshpass`：
+
+```bash
+# CentOS 7 / 麒麟 V10 常见方式
+yum install -y sshpass
+
+# 如果软件源里没有 sshpass，先配置 EPEL 或内部 yum 源
+yum install -y epel-release
+yum install -y sshpass
+```
+
+### 2. 克隆仓库
+
+```bash
+git clone https://github.com/seaworld008/stress-load-testing.git
+cd stress-load-testing
+```
+
+### 3. 修改服务器清单
+
+打开 `scripts/load_stress_distribute.sh`，修改顶部的 `SERVER_INVENTORY`：
+
+```text
+name|host|user|port|password|enabled
+pressure-node-01|192.0.2.11|root|22||true
+pressure-node-02|192.0.2.12|root|22|CHANGE_ME|true
+pressure-node-03|192.0.2.13|root|22||false
+```
+
+填写规则：
+
+- 使用 SSH key 登录时，`password` 留空
+- 使用密码登录时，把 `password` 改成真实密码
+- 暂时不想部署某台机器时，把 `enabled` 改成 `false`
+- 目标机默认建议使用 `root`，因为脚本会写入 `/root/scripts`、配置 root crontab，并可能安装 `stress`
+
+### 4. 检查 SSH 连通性
+
+先手动确认控制机能登录目标服务器：
+
+```bash
+ssh root@192.0.2.11
+```
+
+如果使用密码方式，也可以这样测试：
+
+```bash
+sshpass -p 'CHANGE_ME' ssh root@192.0.2.12
+```
+
+### 5. 先执行 dry-run
+
+```bash
+chmod +x scripts/load_stress_distribute.sh
+./scripts/load_stress_distribute.sh --dry-run
+```
+
+你会看到类似输出：
+
+```text
+[2026-04-28 01:00:00] deploying to pressure-node-01 (root@192.0.2.11:22) with schedule 01:00
+[2026-04-28 01:00:00] deploying to pressure-node-02 (root@192.0.2.12:22) with schedule 01:00
+[2026-04-28 01:00:00] processed 2 enabled server(s)
+```
+
+确认服务器、账号、端口、排班时间都正确后，再继续下一步。
+
+### 6. 正式分发
+
+```bash
+./scripts/load_stress_distribute.sh
+```
+
+脚本会在每台启用的目标服务器上执行这些操作：
+
+- 创建 `/root/scripts`
+- 写入 `/root/scripts/load_stress.sh`
+- 设置脚本权限为 `700`
+- 替换旧的受管理 cron 任务
+- 写入新的定时压测任务
+
+### 7. 到目标机验证
+
+登录任意一台目标服务器检查：
+
+```bash
+crontab -l
+ls -l /root/scripts/load_stress.sh
+```
+
+压测执行后可以查看日志：
+
+```bash
+tail -f /var/log/load_stress.log
+```
+
+如果想手动试跑一次远端脚本：
+
+```bash
+/root/scripts/load_stress.sh
+```
+
 ## 推荐用法
 
 优先使用单文件分发脚本：
