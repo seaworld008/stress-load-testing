@@ -1,0 +1,46 @@
+# Common case 1: all servers share the same root account, SSH port, and password.
+defaults:
+  user: root
+  port: 22
+  password: "CHANGE_ME"
+  enabled: true
+
+servers:
+  - name: pressure-node-01
+    host: 192.0.2.11
+
+  - name: pressure-node-02
+    host: 192.0.2.12
+
+  - name: pressure-node-03
+    host: 192.0.2.13
+
+  - name: pressure-node-04
+    host: 192.0.2.14
+
+# Common case 2: one host uses a different password.
+# servers:
+#   - name: pressure-node-03
+#     host: 192.0.2.13
+#     password: "CHANGE_ME_FOR_THIS_HOST"
+
+# Common case 3: one host uses a different SSH port.
+# servers:
+#   - name: pressure-node-04
+#     host: 192.0.2.14
+#     port: 2222
+
+# Common case 4: temporarily skip one host without deleting it.
+# servers:
+#   - name: pressure-node-05
+#     host: 192.0.2.15
+#     enabled: false
+
+# Common case 5: passwords with spaces or special characters should stay in double quotes.
+# servers:
+#   - name: pressure-node-06
+#     host: 192.0.2.16
+#     password: "P@ss with space"
+#   - name: pressure-node-07
+#     host: 192.0.2.17
+#     password: "p@ss\"word\\test"

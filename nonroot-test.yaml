@@ -1,0 +1,8 @@
+defaults:
+  user: deployer
+  port: 22
+  password: CHANGE_ME
+  enabled: true
+servers:
+  - name: non-root-node
+    host: 10.0.0.2
