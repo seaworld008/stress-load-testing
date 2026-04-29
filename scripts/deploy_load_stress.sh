@@ -2,8 +2,9 @@
 
 set -Eeuo pipefail
 
-CONFIG_FILE="${CONFIG_FILE:-scripts/servers.yaml}"
-LOCAL_STRESS_SCRIPT="${LOCAL_STRESS_SCRIPT:-scripts/load_stress.sh}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/servers.yaml}"
+LOCAL_STRESS_SCRIPT="${LOCAL_STRESS_SCRIPT:-${SCRIPT_DIR}/load_stress.sh}"
 REMOTE_SCRIPT_DIR="/root/scripts"
 REMOTE_SCRIPT_PATH="${REMOTE_SCRIPT_DIR}/load_stress.sh"
 REMOTE_LOG_PATH="/var/log/load_stress.log"
@@ -28,8 +29,8 @@ Usage:
   deploy_load_stress.sh [--config <yaml>] [--script <load_stress.sh>] [--dry-run]
 
 Options:
-  --config <yaml>   YAML inventory file. Default: scripts/servers.yaml
-  --script <path>   Local load_stress.sh to upload. Default: scripts/load_stress.sh
+  --config <yaml>   YAML inventory file. Default: ./servers.yaml beside this script.
+  --script <path>   Local load_stress.sh to upload. Default: ./load_stress.sh beside this script.
   --dry-run         Print the computed actions without connecting to servers.
   -h, --help        Show this help message.
 EOF
@@ -145,13 +146,14 @@ ensure_openssh_clients() {
   command -v scp >/dev/null 2>&1 || fail "scp is still unavailable after install attempt"
 }
 
-ensure_python_yaml() {
-  if python3 - <<'PY' >/dev/null 2>&1
+python_yaml_available() {
+  python3 - <<'PY' >/dev/null 2>&1
 import yaml
 PY
-  then
-    return 0
-  fi
+}
+
+ensure_python_yaml() {
+  python_yaml_available && return 0
 
   local manager
   manager="$(detect_package_manager)" || fail "python3 yaml module is missing and no package manager is available"
@@ -174,12 +176,7 @@ PY
       ;;
   esac
 
-  if python3 - <<'PY' >/dev/null 2>&1
-import yaml
-PY
-  then
-    return 0
-  fi
+  python_yaml_available && return 0
 
   if command -v pip3 >/dev/null 2>&1; then
     log "falling back to pip3 install --user PyYAML"
@@ -188,16 +185,21 @@ PY
     fail "PyYAML is unavailable and pip3 is not installed"
   fi
 
-  python3 - <<'PY' >/dev/null 2>&1
-import yaml
-PY
+  python_yaml_available
 }
 
-prepare_local_dependencies() {
-  ensure_openssh_clients
-  ensure_local_dependency sshpass
+check_yaml_dependencies() {
+  command -v python3 >/dev/null 2>&1 || fail "python3 is required to parse YAML"
+  python_yaml_available || fail "python3 PyYAML is required to parse YAML"
+}
+
+prepare_yaml_dependencies() {
   ensure_local_dependency python3
   ensure_python_yaml || fail "failed to prepare python yaml support"
+}
+
+prepare_remote_dependencies() {
+  ensure_openssh_clients
 }
 
 validate_inputs() {
@@ -233,7 +235,13 @@ for idx, server in enumerate(servers, start=1):
 
     enabled = merged.get("enabled", True)
     if isinstance(enabled, str):
-        enabled = enabled.strip().lower() in {"1", "true", "yes", "on"}
+        enabled_text = enabled.strip().lower()
+        if enabled_text in {"1", "true", "yes", "on"}:
+            enabled = True
+        elif enabled_text in {"0", "false", "no", "off"}:
+            enabled = False
+        else:
+            raise SystemExit(f"servers[{idx}] has invalid enabled value: {enabled}")
     else:
         enabled = bool(enabled)
 
@@ -249,9 +257,6 @@ for idx, server in enumerate(servers, start=1):
         raise SystemExit(f"servers[{idx}] missing required field: host")
     if not user:
         raise SystemExit(f"server {host} missing required field: user")
-    if password is None or password == "":
-        raise SystemExit(f"server {host} missing required field: password")
-
     try:
         port = int(port)
     except Exception as exc:
@@ -259,7 +264,7 @@ for idx, server in enumerate(servers, start=1):
 
     merged["host"] = str(host)
     merged["user"] = str(user)
-    merged["password"] = str(password)
+    merged["password"] = "" if password is None else str(password)
     merged["port"] = port
     normalized.append(merged)
 
@@ -287,13 +292,23 @@ run_remote_command() {
   local host="$4"
   local command="$5"
 
-  sshpass -p "$password" ssh \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    -o ConnectTimeout=10 \
-    -p "$port" \
-    "${user}@${host}" \
-    "$command"
+  if [[ -n "$password" ]]; then
+    SSHPASS="$password" sshpass -e ssh \
+      -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/dev/null \
+      -o ConnectTimeout=10 \
+      -p "$port" \
+      "${user}@${host}" \
+      "$command"
+  else
+    ssh \
+      -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/dev/null \
+      -o ConnectTimeout=10 \
+      -p "$port" \
+      "${user}@${host}" \
+      "$command"
+  fi
 }
 
 copy_remote_file() {
@@ -304,13 +319,23 @@ copy_remote_file() {
   local source_file="$5"
   local dest_file="$6"
 
-  sshpass -p "$password" scp \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    -o ConnectTimeout=10 \
-    -P "$port" \
-    "$source_file" \
-    "${user}@${host}:${dest_file}"
+  if [[ -n "$password" ]]; then
+    SSHPASS="$password" sshpass -e scp \
+      -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/dev/null \
+      -o ConnectTimeout=10 \
+      -P "$port" \
+      "$source_file" \
+      "${user}@${host}:${dest_file}"
+  else
+    scp \
+      -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/dev/null \
+      -o ConnectTimeout=10 \
+      -P "$port" \
+      "$source_file" \
+      "${user}@${host}:${dest_file}"
+  fi
 }
 
 configure_remote_cron() {
@@ -352,7 +377,12 @@ deploy_one_server() {
 main() {
   parse_args "$@"
   validate_inputs
-  prepare_local_dependencies
+
+  if (( DRY_RUN == 1 )); then
+    check_yaml_dependencies
+  else
+    prepare_yaml_dependencies
+  fi
 
   local inventory_json
   inventory_json="$(parse_inventory)" || fail "failed to parse inventory"
@@ -366,7 +396,7 @@ servers = json.loads(sys.argv[1])
 enabled = [server for server in servers if server.get("enabled", True)]
 print(len(enabled))
 for server in enabled:
-    print("\t".join([
+    print("\x1f".join([
         server["name"],
         server["host"],
         server["user"],
@@ -388,9 +418,23 @@ PY
     fail "enabled server count ${enabled_count} exceeds max supported ${max_supported} for the ${WINDOW_START_HOUR}:00-${WINDOW_END_HOUR}:00 window with ${MAX_PARALLEL_PER_SLOT} servers per ${SLOT_MINUTES}-minute slot"
   fi
 
+  if (( DRY_RUN == 0 )); then
+    prepare_remote_dependencies
+
+    if python3 - <<'PY' "$inventory_json"; then
+import json
+import sys
+
+servers = json.loads(sys.argv[1])
+raise SystemExit(0 if any(server.get("enabled", True) and server.get("password") for server in servers) else 1)
+PY
+      ensure_local_dependency sshpass
+    fi
+  fi
+
   local index row name host user password port cron_minute cron_hour
   for (( index = 1; index < ${#server_rows[@]}; index++ )); do
-    IFS=$'\t' read -r name host user password port <<<"${server_rows[index]}"
+    IFS=$'\x1f' read -r name host user password port <<<"${server_rows[index]}"
     read -r cron_minute cron_hour < <(schedule_time_for_index $(( index - 1 )))
     deploy_one_server "$name" "$host" "$user" "$password" "$port" "$cron_minute" "$cron_hour"
   done
