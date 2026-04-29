@@ -37,6 +37,18 @@ chmod 600 scripts/servers.yaml
 编辑 `scripts/servers.yaml`：
 
 ```yaml
+settings:
+  window_start: "02:00"
+  window_end: "04:00"
+  slot_minutes: 15
+  max_parallel_per_slot: 2
+  duration_seconds: 900
+  cpu_divisor: 2
+  vm_workers: 1
+  vm_percent: 15
+  vm_min_mb: 256
+  vm_max_mb: 8192
+
 defaults:
   user: root
   port: 22
@@ -61,6 +73,10 @@ servers:
 
 字段说明：
 
+- `settings` 是运行策略，后续改时间窗、并发和压测强度都改这里。
+- `window_start/window_end` 控制定时任务的启动窗口，脚本只会在这个窗口内安排启动时间。
+- `slot_minutes` 是排班间隔，`max_parallel_per_slot` 是同一时间最多启动多少台。
+- `duration_seconds`、`cpu_divisor`、`vm_*` 会写入 cron，控制目标机压测行为。
 - `defaults` 会被每台服务器继承。
 - 单台服务器上的字段会覆盖 `defaults`。
 - `password: ""` 表示使用 SSH key，不使用 `sshpass`。
@@ -103,6 +119,18 @@ tail -f /var/log/load_stress.log
 假设要给 4 台服务器排定夜间压测，其中 3 台启用、1 台暂时跳过：
 
 ```yaml
+settings:
+  window_start: "02:00"
+  window_end: "04:00"
+  slot_minutes: 15
+  max_parallel_per_slot: 2
+  duration_seconds: 900
+  cpu_divisor: 2
+  vm_workers: 1
+  vm_percent: 15
+  vm_min_mb: 256
+  vm_max_mb: 8192
+
 defaults:
   user: root
   port: 22
@@ -134,9 +162,9 @@ servers:
 预期排班：
 
 ```text
-pressure-node-01 -> 01:00
-pressure-node-02 -> 01:00
-pressure-node-03 -> 01:15
+pressure-node-01 -> 02:00
+pressure-node-02 -> 02:00
+pressure-node-03 -> 02:15
 ```
 
 确认无误后执行：
@@ -155,12 +183,13 @@ pressure-node-03 -> 01:15
 
 ## 排班规则
 
-- 时间窗口固定为 `01:00-03:00`。
-- 每个排班槽为 15 分钟。
-- 每个排班槽最多 2 台服务器。
-- 最多支持 16 台启用服务器；超过会失败退出，不会部分部署。
+- 时间窗口由 `settings.window_start` 和 `settings.window_end` 控制。
+- 每个排班槽由 `settings.slot_minutes` 控制。
+- 每个排班槽最多启动数由 `settings.max_parallel_per_slot` 控制。
+- 容量 = 时间窗口分钟数 / 排班间隔 * 每槽最大并发；超过会失败退出，不会部分部署。
 
-启用服务器按 `servers.yaml` 中出现的顺序排班：前 2 台 `01:00`，接下来 2 台 `01:15`，以此类推。
+启用服务器按 `servers.yaml` 中出现的顺序排班。比如 `02:00-04:00`、15 分钟一槽、每槽 2 台，
+就是前 2 台 `02:00`，接下来 2 台 `02:15`，以此类推；不会安排 `04:00` 或之后启动。
 
 ## 目标机压测行为
 
@@ -168,9 +197,9 @@ pressure-node-03 -> 01:15
 
 - 要求 root 执行。
 - 自动安装 `stress`。
-- CPU worker 默认为 CPU 核数的一半，最少 1 个。
-- 内存 worker 默认为 1 个，使用总内存的 15%，并限制在安全范围内。
-- 默认运行 900 秒。
+- CPU worker 默认由 `settings.cpu_divisor` 控制，最少 1 个。
+- 内存 worker 和内存比例由 `settings.vm_workers`、`settings.vm_percent`、`settings.vm_min_mb`、`settings.vm_max_mb` 控制。
+- 运行时长由 `settings.duration_seconds` 控制。
 - 使用锁目录避免同一台机器上的任务重叠。
 
 ## 安全约定

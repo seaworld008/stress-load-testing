@@ -2,6 +2,18 @@
 # scripts/servers.yaml is intentionally ignored by git because it may contain
 # intranet IPs and passwords.
 
+settings:
+  window_start: "02:00"
+  window_end: "04:00"
+  slot_minutes: 15
+  max_parallel_per_slot: 2
+  duration_seconds: 900
+  cpu_divisor: 2
+  vm_workers: 1
+  vm_percent: 15
+  vm_min_mb: 256
+  vm_max_mb: 8192
+
 defaults:
   user: root
   port: 22
