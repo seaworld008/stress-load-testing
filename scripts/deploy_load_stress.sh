@@ -146,58 +146,6 @@ ensure_openssh_clients() {
   command -v scp >/dev/null 2>&1 || fail "scp is still unavailable after install attempt"
 }
 
-python_yaml_available() {
-  python3 - <<'PY' >/dev/null 2>&1
-import yaml
-PY
-}
-
-ensure_python_yaml() {
-  python_yaml_available && return 0
-
-  local manager
-  manager="$(detect_package_manager)" || fail "python3 yaml module is missing and no package manager is available"
-
-  case "$manager" in
-    apt-get)
-      install_system_package python3-yaml
-      ;;
-    dnf|yum)
-      install_system_package python3-PyYAML
-      ;;
-    zypper)
-      install_system_package python3-PyYAML
-      ;;
-    apk)
-      install_system_package py3-yaml
-      ;;
-    *)
-      fail "cannot install PyYAML automatically with package manager ${manager}"
-      ;;
-  esac
-
-  python_yaml_available && return 0
-
-  if command -v pip3 >/dev/null 2>&1; then
-    log "falling back to pip3 install --user PyYAML"
-    pip3 install --user PyYAML >/dev/null
-  else
-    fail "PyYAML is unavailable and pip3 is not installed"
-  fi
-
-  python_yaml_available
-}
-
-check_yaml_dependencies() {
-  command -v python3 >/dev/null 2>&1 || fail "python3 is required to parse YAML"
-  python_yaml_available || fail "python3 PyYAML is required to parse YAML"
-}
-
-prepare_yaml_dependencies() {
-  ensure_local_dependency python3
-  ensure_python_yaml || fail "failed to prepare python yaml support"
-}
-
 prepare_remote_dependencies() {
   ensure_openssh_clients
 }
@@ -208,68 +156,164 @@ validate_inputs() {
 }
 
 parse_inventory() {
-  python3 - "$CONFIG_FILE" <<'PY'
-import json
-import sys
-from pathlib import Path
+  awk '
+    function trim(value) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      return value
+    }
 
-import yaml
+    function scalar(value) {
+      value = trim(value)
+      if (value == "\"\"") {
+        return ""
+      }
+      if (value ~ /^".*"$/ || value ~ /^\047.*\047$/) {
+        value = substr(value, 2, length(value) - 2)
+      }
+      return value
+    }
 
-config_path = Path(sys.argv[1])
-data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-defaults = data.get("defaults") or {}
-servers = data.get("servers") or []
+    function bool_value(value, server_index) {
+      value = tolower(scalar(value))
+      if (value == "" || value == "1" || value == "true" || value == "yes" || value == "on") {
+        return "true"
+      }
+      if (value == "0" || value == "false" || value == "no" || value == "off") {
+        return "false"
+      }
+      printf "servers[%d] has invalid enabled value: %s\n", server_index, value > "/dev/stderr"
+      exit 1
+    }
 
-if not isinstance(defaults, dict):
-    raise SystemExit("defaults must be a mapping")
-if not isinstance(servers, list):
-    raise SystemExit("servers must be a list")
+    function reset_server() {
+      name = ""
+      host = ""
+      user = default_user
+      port = default_port
+      password = default_password
+      enabled = default_enabled
+    }
 
-normalized = []
-for idx, server in enumerate(servers, start=1):
-    if not isinstance(server, dict):
-        raise SystemExit(f"servers[{idx}] must be a mapping")
+    function emit_server() {
+      if (!in_server) {
+        return
+      }
 
-    merged = dict(defaults)
-    merged.update(server)
+      if (host == "") {
+        printf "servers[%d] missing required field: host\n", server_index > "/dev/stderr"
+        exit 1
+      }
+      if (user == "") {
+        printf "server %s missing required field: user\n", host > "/dev/stderr"
+        exit 1
+      }
+      if (port !~ /^[0-9]+$/) {
+        printf "server %s has invalid port: %s\n", host, port > "/dev/stderr"
+        exit 1
+      }
 
-    enabled = merged.get("enabled", True)
-    if isinstance(enabled, str):
-        enabled_text = enabled.strip().lower()
-        if enabled_text in {"1", "true", "yes", "on"}:
-            enabled = True
-        elif enabled_text in {"0", "false", "no", "off"}:
-            enabled = False
-        else:
-            raise SystemExit(f"servers[{idx}] has invalid enabled value: {enabled}")
-    else:
-        enabled = bool(enabled)
+      if (name == "") {
+        name = host
+      }
 
-    merged["enabled"] = enabled
-    merged["name"] = str(merged.get("name") or merged.get("host") or f"server-{idx}")
+      if (enabled == "true") {
+        printf "%s\037%s\037%s\037%s\037%s\n", name, host, user, password, port
+      }
+    }
 
-    host = merged.get("host")
-    user = merged.get("user")
-    password = merged.get("password")
-    port = merged.get("port", 22)
+    BEGIN {
+      section = ""
+      in_server = 0
+      server_index = 0
+      default_user = "root"
+      default_port = "22"
+      default_password = ""
+      default_enabled = "true"
+    }
 
-    if not host:
-        raise SystemExit(f"servers[{idx}] missing required field: host")
-    if not user:
-        raise SystemExit(f"server {host} missing required field: user")
-    try:
-        port = int(port)
-    except Exception as exc:
-        raise SystemExit(f"server {host} has invalid port: {port}") from exc
+    /^[[:space:]]*($|#)/ {
+      next
+    }
 
-    merged["host"] = str(host)
-    merged["user"] = str(user)
-    merged["password"] = "" if password is None else str(password)
-    merged["port"] = port
-    normalized.append(merged)
+    /^[^[:space:]][^:]*:[[:space:]]*$/ {
+      key = trim(substr($0, 1, index($0, ":") - 1))
+      if (key == "defaults" || key == "servers") {
+        if (key == "servers") {
+          emit_server()
+          in_server = 0
+        }
+        section = key
+      }
+      next
+    }
 
-print(json.dumps(normalized, ensure_ascii=False))
-PY
+    section == "defaults" && /^[[:space:]]+[A-Za-z_][A-Za-z0-9_-]*:/ {
+      key = trim(substr($0, 1, index($0, ":") - 1))
+      value = scalar(substr($0, index($0, ":") + 1))
+
+      if (key == "user") {
+        default_user = value
+      } else if (key == "port") {
+        default_port = value
+      } else if (key == "password") {
+        default_password = value
+      } else if (key == "enabled") {
+        default_enabled = bool_value(value, 0)
+      }
+      next
+    }
+
+    section == "servers" && /^[[:space:]]*-[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*:/ {
+      emit_server()
+      server_index++
+      in_server = 1
+      reset_server()
+
+      line = $0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+      key = trim(substr(line, 1, index(line, ":") - 1))
+      value = scalar(substr(line, index(line, ":") + 1))
+
+      if (key == "name") {
+        name = value
+      } else if (key == "host") {
+        host = value
+      } else if (key == "user") {
+        user = value
+      } else if (key == "port") {
+        port = value
+      } else if (key == "password") {
+        password = value
+      } else if (key == "enabled") {
+        enabled = bool_value(value, server_index)
+      }
+      next
+    }
+
+    section == "servers" && in_server && /^[[:space:]]+[A-Za-z_][A-Za-z0-9_-]*:/ {
+      key = trim(substr($0, 1, index($0, ":") - 1))
+      value = scalar(substr($0, index($0, ":") + 1))
+
+      if (key == "name") {
+        name = value
+      } else if (key == "host") {
+        host = value
+      } else if (key == "user") {
+        user = value
+      } else if (key == "port") {
+        port = value
+      } else if (key == "password") {
+        password = value
+      } else if (key == "enabled") {
+        enabled = bool_value(value, server_index)
+      }
+      next
+    }
+
+    END {
+      emit_server()
+    }
+  ' "$CONFIG_FILE"
 }
 
 schedule_time_for_index() {
@@ -283,6 +327,19 @@ schedule_time_for_index() {
   minute=$(( total_minutes % 60 ))
 
   printf '%02d %02d\n' "$minute" "$hour"
+}
+
+inventory_needs_sshpass() {
+  local row name host user password port
+
+  for row in "$@"; do
+    IFS=$'\x1f' read -r name host user password port <<<"$row"
+    if [[ -n "$password" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 run_remote_command() {
@@ -378,37 +435,19 @@ main() {
   parse_args "$@"
   validate_inputs
 
-  if (( DRY_RUN == 1 )); then
-    check_yaml_dependencies
-  else
-    prepare_yaml_dependencies
+  local inventory_tmp
+  inventory_tmp="$(mktemp)"
+  if ! parse_inventory >"$inventory_tmp"; then
+    rm -f "$inventory_tmp"
+    fail "failed to parse inventory"
   fi
 
-  local inventory_json
-  inventory_json="$(parse_inventory)" || fail "failed to parse inventory"
-
-  mapfile -t server_rows < <(
-    python3 - <<'PY' "$inventory_json"
-import json
-import sys
-
-servers = json.loads(sys.argv[1])
-enabled = [server for server in servers if server.get("enabled", True)]
-print(len(enabled))
-for server in enabled:
-    print("\x1f".join([
-        server["name"],
-        server["host"],
-        server["user"],
-        server["password"],
-        str(server["port"]),
-    ]))
-PY
-  )
+  mapfile -t server_rows <"$inventory_tmp"
+  rm -f "$inventory_tmp"
 
   [[ ${#server_rows[@]} -ge 1 ]] || fail "no enabled servers found in ${CONFIG_FILE}"
 
-  local enabled_count="${server_rows[0]}"
+  local enabled_count="${#server_rows[@]}"
   local max_slots total_window_minutes max_supported
   total_window_minutes=$(( (WINDOW_END_HOUR - WINDOW_START_HOUR) * 60 ))
   max_slots=$(( total_window_minutes / SLOT_MINUTES ))
@@ -421,21 +460,15 @@ PY
   if (( DRY_RUN == 0 )); then
     prepare_remote_dependencies
 
-    if python3 - <<'PY' "$inventory_json"; then
-import json
-import sys
-
-servers = json.loads(sys.argv[1])
-raise SystemExit(0 if any(server.get("enabled", True) and server.get("password") for server in servers) else 1)
-PY
+    if inventory_needs_sshpass "${server_rows[@]}"; then
       ensure_local_dependency sshpass
     fi
   fi
 
   local index row name host user password port cron_minute cron_hour
-  for (( index = 1; index < ${#server_rows[@]}; index++ )); do
+  for (( index = 0; index < ${#server_rows[@]}; index++ )); do
     IFS=$'\x1f' read -r name host user password port <<<"${server_rows[index]}"
-    read -r cron_minute cron_hour < <(schedule_time_for_index $(( index - 1 )))
+    read -r cron_minute cron_hour < <(schedule_time_for_index "$index")
     deploy_one_server "$name" "$host" "$user" "$password" "$port" "$cron_minute" "$cron_hour"
   done
 

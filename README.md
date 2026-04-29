@@ -24,8 +24,8 @@
 ssh root@192.0.2.11
 ```
 
-控制机还需要 `python3` 和 PyYAML 来解析 `servers.yaml`。`--dry-run` 不会安装依赖；正式
-`--apply` 会尝试自动安装缺失的 `python3`、PyYAML、SSH 客户端和必要的 `sshpass`。
+控制机还需要 `bash`、`awk`、`ssh` 和 `scp`。如果 `servers.yaml` 中配置了 `password`，
+正式 `--apply` 会检查并尝试安装必要的 `sshpass`。
 
 ### 2. 创建服务器清单
 
