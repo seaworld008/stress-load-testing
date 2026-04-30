@@ -2,8 +2,9 @@
 
 一套用于内网 Linux 服务器批量部署定时压测任务的参考流程。
 
-目标很简单：在一台内网控制机上维护 `scripts/servers.yaml`，执行一个入口脚本，把受管理的
-`/root/scripts/load_stress.sh` 分发到目标服务器，并为每台服务器写入确定性的 root cron。
+核心使用方式：运维人员在一台内网控制机上维护 `scripts/servers.yaml`，执行一个入口脚本，
+把受管理的 `/root/scripts/load_stress.sh` 分发到目标服务器，并为每台服务器写入确定性的
+root cron。
 
 ## 文件
 
@@ -15,26 +16,58 @@
 
 ## 最终使用流程
 
-### 1. 准备控制机
+下面模拟一个正常运维人员从零开始使用的完整步骤。命令默认在内网控制机上执行。
 
-控制机需要能 SSH 到所有目标服务器。推荐优先使用 SSH key；如果 `servers.yaml` 中配置了
-`password`，正式部署时控制机还需要 `sshpass`。
+### 1. 进入工作目录并克隆仓库
 
 ```bash
-ssh root@192.0.2.11
+mkdir -p /root/soft
+cd /root/soft
+
+git clone git@github-seaworld:seaworld008/stress-load-testing.git
+cd stress-load-testing
 ```
 
-控制机还需要 `bash`、`awk`、`ssh` 和 `scp`。如果 `servers.yaml` 中配置了 `password`，
-正式 `--apply` 会检查并尝试安装必要的 `sshpass`。
-
-### 2. 创建服务器清单
+如果控制机没有配置 GitHub SSH key，也可以用 HTTPS 地址：
 
 ```bash
+git clone https://github.com/seaworld008/stress-load-testing.git
+cd stress-load-testing
+```
+
+### 2. 准备控制机依赖
+
+控制机需要有 `bash`、`awk`、`ssh`、`scp`。如果 `servers.yaml` 里使用密码登录，正式部署时还需要
+`sshpass`；脚本会尝试自动安装 `sshpass`。
+
+CentOS 7 可先确认基础命令：
+
+```bash
+bash --version
+awk --version
+ssh -V
+scp -V
+```
+
+### 3. 创建本地配置文件
+
+```bash
+cd /root/soft/stress-load-testing
 cp scripts/servers.yaml.example scripts/servers.yaml
 chmod 600 scripts/servers.yaml
 ```
 
-编辑 `scripts/servers.yaml`：
+`scripts/servers.yaml` 已加入 `.gitignore`，可以放内网 IP 和密码，不会提交到仓库。
+
+### 4. 修改 servers.yaml
+
+编辑配置：
+
+```bash
+vi scripts/servers.yaml
+```
+
+可以直接按下面这个结构改。注意：注释要单独写一行，不要写在配置值后面。
 
 ```yaml
 # settings 是运行策略。以后改压测窗口、并发数量、压测时长和压测强度，优先改这里。
@@ -98,160 +131,113 @@ servers:
 
   - name: pressure-node-03
     host: 192.0.2.13
-    # password: "" 表示这台机器使用 SSH key 免密登录。
-    password: ""
 
+  # 临时跳过某台机器时，不用删除，改成 enabled: false 即可。
   - name: pressure-node-04
     host: 192.0.2.14
-    # enabled: false 表示保留配置但本次跳过部署。
     enabled: false
 ```
 
-字段说明：
+### 5. 先检查 SSH 连通性
 
-- `settings` 是运行策略，后续改时间窗、并发和压测强度都改这里。
-- `window_start/window_end` 控制定时任务的启动窗口，脚本只会在这个窗口内安排启动时间。
-- `slot_minutes` 是排班间隔，`max_parallel_per_slot` 是同一时间最多启动多少台。
-- `duration_seconds`、`cpu_percent`、`vm_*` 会写入 cron，控制目标机压测行为。
-- `defaults` 会被每台服务器继承。
-- 单台服务器上的字段会覆盖 `defaults`。
-- `password: ""` 表示使用 SSH key，不使用 `sshpass`。
-- `enabled: false` 表示保留配置但跳过这台机器。
-
-### 3. 先 dry-run
+任选一台目标服务器测试：
 
 ```bash
-chmod +x scripts/*.sh
-./scripts/apply_load_stress.sh --dry-run
+ssh root@192.0.2.11 'hostname'
 ```
 
-dry-run 只解析配置并打印排班，不连接远端服务器。确认服务器、账号、端口和时间窗口都正确后再正式执行。
-
-### 4. 正式应用
+如果使用密码方式，也可以先手动测试：
 
 ```bash
-./scripts/apply_load_stress.sh --apply
+sshpass -p 'CHANGE_ME' ssh root@192.0.2.11 'hostname'
 ```
 
-重复执行是安全的：脚本会覆盖目标机上的受管理脚本，并先删除旧的
-`/root/scripts/load_stress.sh` cron 条目，再写入新的条目。
-
-### 5. 到目标机验证
+### 6. 执行 dry-run
 
 ```bash
-crontab -l
-ls -l /root/scripts/load_stress.sh
-tail -f /var/log/load_stress.log
+cd /root/soft/stress-load-testing/scripts
+./apply_load_stress.sh --dry-run
 ```
 
-如需手动试跑：
+dry-run 只解析配置并打印排班，不连接远端服务器，不修改 crontab。
 
-```bash
-/root/scripts/load_stress.sh
-```
-
-## 详细案例
-
-假设要给 4 台服务器排定夜间压测，其中 3 台启用、1 台暂时跳过：
-
-```yaml
-# settings 是运行策略。以后改压测窗口、并发数量、压测时长和压测强度，优先改这里。
-settings:
-  # 允许启动压测的开始时间，格式固定为 HH:MM。
-  window_start: "02:00"
-
-  # 允许启动压测的结束时间。脚本不会安排 04:00 或之后启动。
-  window_end: "04:00"
-
-  # 每隔多少分钟安排一批机器。
-  slot_minutes: 15
-
-  # 每一批最多同时启动多少台机器，避免所有机器同一时间打满。
-  max_parallel_per_slot: 2
-
-  # 单台机器每次压测持续秒数。900 秒 = 15 分钟。
-  duration_seconds: 900
-
-  # CPU 压测比例，范围 0-100，表示最多按总 CPU 核数的多少比例启动 CPU worker。
-  # 计算公式为 CPU worker = CPU 核数 * cpu_percent / 100，结果向下取整。
-  # cpu_percent: 25 表示最多约 25% CPU，例如 4 核启动 1 个 CPU worker，12 核启动 3 个。
-  # cpu_percent: 0 表示不启动 CPU 压测，只执行内存压测。
-  cpu_percent: 25
-
-  # 内存压测 worker 数。一般保持 1。
-  vm_workers: 1
-
-  # 内存压测比例。15 表示使用总内存约 15%。
-  vm_percent: 15
-
-  # 单个内存 worker 的最小内存，单位 MB。
-  vm_min_mb: 256
-
-  # 单个内存 worker 的最大内存，单位 MB，防止大内存机器压力过高。
-  vm_max_mb: 8192
-
-# defaults 是所有服务器的默认 SSH 配置。单台服务器可以覆盖这些值。
-defaults:
-  # SSH 用户。当前脚本默认写 /root/scripts 和 root crontab，建议使用 root。
-  user: root
-
-  # SSH 端口。
-  port: 22
-
-  # SSH 密码。使用 SSH key 免密登录时填 ""。
-  password: "CHANGE_ME"
-
-  # 默认是否启用服务器。单台机器可用 enabled: false 临时跳过。
-  enabled: true
-
-# servers 是服务器清单。脚本会按这里的顺序排班。
-servers:
-  # name 只用于日志展示，建议包含主机名或业务名。
-  # host 是服务器 IP 或域名。
-  - name: pressure-node-01
-    host: 192.0.2.11
-
-  - name: pressure-node-02
-    host: 192.0.2.12
-
-  - name: pressure-node-03
-    host: 192.0.2.13
-    # password: "" 表示这台机器使用 SSH key 免密登录。
-    password: ""
-
-  - name: pressure-node-04
-    host: 192.0.2.14
-    # enabled: false 表示保留配置但本次跳过部署。
-    enabled: false
-```
-
-执行：
-
-```bash
-./scripts/apply_load_stress.sh --dry-run
-```
-
-预期排班：
+输出类似：
 
 ```text
-pressure-node-01 -> 02:00
-pressure-node-02 -> 02:00
-pressure-node-03 -> 02:15
+[2026-04-30 10:05:53] schedule window 02:00-04:00, slot=15m, max_parallel=2, duration=900s, cpu_percent=25, vm_percent=15
+[2026-04-30 10:05:53] deploying to pressure-node-01 (root@192.0.2.11:22) with schedule 02:00
+[2026-04-30 10:05:53] deploying to pressure-node-02 (root@192.0.2.12:22) with schedule 02:00
+[2026-04-30 10:05:53] deploying to pressure-node-03 (root@192.0.2.13:22) with schedule 02:15
+[2026-04-30 10:05:53] processed 3 enabled server(s)
 ```
 
-确认无误后执行：
+确认这些信息：
+
+- 时间窗口是否正确，例如 `02:00-04:00`。
+- `cpu_percent`、`vm_percent` 是否符合预期。
+- 服务器 IP、端口、账号是否正确。
+- 排班是否在窗口内，没有超出结束时间。
+- 启用服务器数量是否符合预期。
+
+### 7. 正式部署
+
+确认 dry-run 正确后执行：
 
 ```bash
-./scripts/apply_load_stress.sh --apply
+./apply_load_stress.sh --apply
 ```
 
-部署结果：
+脚本会对每台启用服务器执行：
 
-- 每台启用服务器创建 `/root/scripts`。
+- 创建 `/root/scripts`。
 - 上传并覆盖 `/root/scripts/load_stress.sh`。
 - 设置脚本权限为 `700`。
-- 替换受管理 cron 条目。
-- 压测日志写入 `/var/log/load_stress.log`。
+- 删除旧的受管理 cron 条目。
+- 写入新的定时压测 cron 条目。
+
+重复执行是安全的：同一台机器只会保留一条受管理的 `/root/scripts/load_stress.sh` cron。
+
+### 8. 抽查部署结果
+
+任选一两台目标服务器检查：
+
+```bash
+ssh root@192.0.2.11 'crontab -l | grep load_stress'
+ssh root@192.0.2.11 'ls -l /root/scripts/load_stress.sh'
+```
+
+压测执行后查看日志：
+
+```bash
+ssh root@192.0.2.11 'tail -n 50 /var/log/load_stress.log'
+```
+
+如需手动试跑远端脚本：
+
+```bash
+ssh root@192.0.2.11 '/root/scripts/load_stress.sh'
+```
+
+### 9. 后续调整配置
+
+以后只需要改 `scripts/servers.yaml`，再 dry-run、apply：
+
+```bash
+cd /root/soft/stress-load-testing/scripts
+vi servers.yaml
+
+./apply_load_stress.sh --dry-run
+./apply_load_stress.sh --apply
+```
+
+常见调整：
+
+- 改压测窗口：修改 `settings.window_start`、`settings.window_end`。
+- 改同批并发：修改 `settings.max_parallel_per_slot`。
+- 改 CPU 压力：修改 `settings.cpu_percent`。
+- 改内存压力：修改 `settings.vm_percent`、`settings.vm_min_mb`、`settings.vm_max_mb`。
+- 临时跳过机器：在对应服务器下增加 `enabled: false`。
+- 新增机器：在 `servers` 末尾增加一段 `name` 和 `host`。
 
 ## 排班规则
 
@@ -269,7 +255,7 @@ pressure-node-03 -> 02:15
 
 - 要求 root 执行。
 - 自动安装 `stress`。
-- CPU worker 默认由 `settings.cpu_percent` 控制，按比例向下取整。
+- CPU worker 由 `settings.cpu_percent` 控制，按比例向下取整。
 - 内存 worker 和内存比例由 `settings.vm_workers`、`settings.vm_percent`、`settings.vm_min_mb`、`settings.vm_max_mb` 控制。
 - 运行时长由 `settings.duration_seconds` 控制。
 - 使用锁目录避免同一台机器上的任务重叠。
