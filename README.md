@@ -54,11 +54,11 @@ settings:
   # 单台机器每次压测持续秒数。900 秒 = 15 分钟。
   duration_seconds: 900
 
-  # CPU 压测强度，计算公式为 CPU worker = CPU 核数 / cpu_divisor，结果向下取整，最少 1 个。
-  # cpu_divisor: 2 表示大约使用一半 CPU，例如 4 核会启动 2 个 CPU worker。
-  # cpu_divisor: 3 表示压力更小，例如 4 核会启动 1 个 CPU worker，12 核会启动 4 个。
-  # 这个值越大 CPU 压力越小，越小 CPU 压力越大，不能小于 1。
-  cpu_divisor: 2
+  # CPU 压测比例，范围 0-100，表示最多按总 CPU 核数的多少比例启动 CPU worker。
+  # 计算公式为 CPU worker = CPU 核数 * cpu_percent / 100，结果向下取整。
+  # cpu_percent: 25 表示最多约 25% CPU，例如 4 核启动 1 个 CPU worker，12 核启动 3 个。
+  # cpu_percent: 0 表示不启动 CPU 压测，只执行内存压测。
+  cpu_percent: 25
 
   # 内存压测 worker 数。一般保持 1。
   vm_workers: 1
@@ -112,7 +112,7 @@ servers:
 - `settings` 是运行策略，后续改时间窗、并发和压测强度都改这里。
 - `window_start/window_end` 控制定时任务的启动窗口，脚本只会在这个窗口内安排启动时间。
 - `slot_minutes` 是排班间隔，`max_parallel_per_slot` 是同一时间最多启动多少台。
-- `duration_seconds`、`cpu_divisor`、`vm_*` 会写入 cron，控制目标机压测行为。
+- `duration_seconds`、`cpu_percent`、`vm_*` 会写入 cron，控制目标机压测行为。
 - `defaults` 会被每台服务器继承。
 - 单台服务器上的字段会覆盖 `defaults`。
 - `password: ""` 表示使用 SSH key，不使用 `sshpass`。
@@ -172,11 +172,11 @@ settings:
   # 单台机器每次压测持续秒数。900 秒 = 15 分钟。
   duration_seconds: 900
 
-  # CPU 压测强度，计算公式为 CPU worker = CPU 核数 / cpu_divisor，结果向下取整，最少 1 个。
-  # cpu_divisor: 2 表示大约使用一半 CPU，例如 4 核会启动 2 个 CPU worker。
-  # cpu_divisor: 3 表示压力更小，例如 4 核会启动 1 个 CPU worker，12 核会启动 4 个。
-  # 这个值越大 CPU 压力越小，越小 CPU 压力越大，不能小于 1。
-  cpu_divisor: 2
+  # CPU 压测比例，范围 0-100，表示最多按总 CPU 核数的多少比例启动 CPU worker。
+  # 计算公式为 CPU worker = CPU 核数 * cpu_percent / 100，结果向下取整。
+  # cpu_percent: 25 表示最多约 25% CPU，例如 4 核启动 1 个 CPU worker，12 核启动 3 个。
+  # cpu_percent: 0 表示不启动 CPU 压测，只执行内存压测。
+  cpu_percent: 25
 
   # 内存压测 worker 数。一般保持 1。
   vm_workers: 1
@@ -269,7 +269,7 @@ pressure-node-03 -> 02:15
 
 - 要求 root 执行。
 - 自动安装 `stress`。
-- CPU worker 默认由 `settings.cpu_divisor` 控制，最少 1 个。
+- CPU worker 默认由 `settings.cpu_percent` 控制，按比例向下取整。
 - 内存 worker 和内存比例由 `settings.vm_workers`、`settings.vm_percent`、`settings.vm_min_mb`、`settings.vm_max_mb` 控制。
 - 运行时长由 `settings.duration_seconds` 控制。
 - 使用锁目录避免同一台机器上的任务重叠。

@@ -15,7 +15,7 @@ WINDOW_END_MINUTES=180
 SLOT_MINUTES=15
 MAX_PARALLEL_PER_SLOT=2
 DURATION_SECONDS=900
-CPU_DIVISOR=2
+CPU_PERCENT=25
 VM_WORKERS=1
 VM_PERCENT=15
 VM_MIN_MB=256
@@ -385,8 +385,8 @@ apply_setting() {
     duration_seconds)
       DURATION_SECONDS="$value"
       ;;
-    cpu_divisor)
-      CPU_DIVISOR="$value"
+    cpu_percent)
+      CPU_PERCENT="$value"
       ;;
     vm_workers)
       VM_WORKERS="$value"
@@ -410,7 +410,8 @@ validate_settings() {
   validate_integer_setting slot_minutes "$SLOT_MINUTES" 1
   validate_integer_setting max_parallel_per_slot "$MAX_PARALLEL_PER_SLOT" 1
   validate_integer_setting duration_seconds "$DURATION_SECONDS" 1
-  validate_integer_setting cpu_divisor "$CPU_DIVISOR" 1
+  validate_integer_setting cpu_percent "$CPU_PERCENT" 0
+  (( 10#$CPU_PERCENT <= 100 )) || fail "cpu_percent must be <= 100: ${CPU_PERCENT}"
   validate_integer_setting vm_workers "$VM_WORKERS" 0
   validate_integer_setting vm_percent "$VM_PERCENT" 0
   validate_integer_setting vm_min_mb "$VM_MIN_MB" 0
@@ -441,8 +442,8 @@ schedule_time_for_index() {
 }
 
 remote_stress_env() {
-  printf 'DURATION_SECONDS=%q CPU_DIVISOR=%q VM_WORKERS=%q VM_PERCENT=%q VM_MIN_MB=%q VM_MAX_MB=%q' \
-    "$DURATION_SECONDS" "$CPU_DIVISOR" "$VM_WORKERS" "$VM_PERCENT" "$VM_MIN_MB" "$VM_MAX_MB"
+  printf 'DURATION_SECONDS=%q CPU_PERCENT=%q VM_WORKERS=%q VM_PERCENT=%q VM_MIN_MB=%q VM_MAX_MB=%q' \
+    "$DURATION_SECONDS" "$CPU_PERCENT" "$VM_WORKERS" "$VM_PERCENT" "$VM_MIN_MB" "$VM_MAX_MB"
 }
 
 inventory_needs_sshpass() {
@@ -592,7 +593,7 @@ main() {
     fail "enabled server count ${enabled_count} exceeds max supported ${max_supported} for the ${WINDOW_START}-${WINDOW_END} window with ${MAX_PARALLEL_PER_SLOT} servers per ${SLOT_MINUTES}-minute slot"
   fi
 
-  log "schedule window ${WINDOW_START}-${WINDOW_END}, slot=${SLOT_MINUTES}m, max_parallel=${MAX_PARALLEL_PER_SLOT}, duration=${DURATION_SECONDS}s"
+  log "schedule window ${WINDOW_START}-${WINDOW_END}, slot=${SLOT_MINUTES}m, max_parallel=${MAX_PARALLEL_PER_SLOT}, duration=${DURATION_SECONDS}s, cpu_percent=${CPU_PERCENT}, vm_percent=${VM_PERCENT}"
 
   if (( DRY_RUN == 0 )); then
     prepare_remote_dependencies

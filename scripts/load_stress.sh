@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 DURATION_SECONDS="${DURATION_SECONDS:-900}"
-CPU_DIVISOR="${CPU_DIVISOR:-2}"
+CPU_PERCENT="${CPU_PERCENT:-25}"
 VM_WORKERS="${VM_WORKERS:-1}"
 VM_PERCENT="${VM_PERCENT:-15}"
 VM_MIN_MB="${VM_MIN_MB:-256}"
@@ -81,10 +81,10 @@ detect_cpu_workers() {
 
   [[ "$cpu_cores" =~ ^[0-9]+$ ]] || fail "failed to detect CPU core count"
 
-  cpu_workers=$(( cpu_cores / CPU_DIVISOR ))
-  if (( cpu_workers < 1 )); then
-    cpu_workers=1
-  fi
+  [[ "$CPU_PERCENT" =~ ^[0-9]+$ ]] || fail "CPU_PERCENT must be an integer"
+  (( CPU_PERCENT <= 100 )) || fail "CPU_PERCENT must be <= 100"
+
+  cpu_workers=$(( cpu_cores * CPU_PERCENT / 100 ))
 
   printf '%s\n' "$cpu_workers"
 }
@@ -136,7 +136,11 @@ main() {
   vm_bytes="$(detect_vm_bytes_mb)"
 
   log "starting stress test: cpu_workers=${cpu_workers}, vm_workers=${VM_WORKERS}, vm_bytes=${vm_bytes}, duration=${DURATION_SECONDS}s"
-  stress --cpu "$cpu_workers" --vm "$VM_WORKERS" --vm-bytes "$vm_bytes" --timeout "$DURATION_SECONDS"
+  if (( cpu_workers > 0 )); then
+    stress --cpu "$cpu_workers" --vm "$VM_WORKERS" --vm-bytes "$vm_bytes" --timeout "$DURATION_SECONDS"
+  else
+    stress --vm "$VM_WORKERS" --vm-bytes "$vm_bytes" --timeout "$DURATION_SECONDS"
+  fi
   log "stress test completed"
 }
 
