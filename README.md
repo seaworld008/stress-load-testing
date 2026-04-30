@@ -37,25 +37,56 @@ chmod 600 scripts/servers.yaml
 编辑 `scripts/servers.yaml`：
 
 ```yaml
+# settings 是运行策略。以后改压测窗口、并发数量、压测时长和压测强度，优先改这里。
 settings:
+  # 允许启动压测的开始时间，格式固定为 HH:MM。
   window_start: "02:00"
+
+  # 允许启动压测的结束时间。脚本不会安排 04:00 或之后启动。
   window_end: "04:00"
+
+  # 每隔多少分钟安排一批机器。
   slot_minutes: 15
+
+  # 每一批最多同时启动多少台机器，避免所有机器同一时间打满。
   max_parallel_per_slot: 2
+
+  # 单台机器每次压测持续秒数。900 秒 = 15 分钟。
   duration_seconds: 900
+
+  # CPU 压测强度。2 表示使用 CPU 核数的一半；值越小压力越大，不能小于 1。
   cpu_divisor: 2
+
+  # 内存压测 worker 数。一般保持 1。
   vm_workers: 1
+
+  # 内存压测比例。15 表示使用总内存约 15%。
   vm_percent: 15
+
+  # 单个内存 worker 的最小内存，单位 MB。
   vm_min_mb: 256
+
+  # 单个内存 worker 的最大内存，单位 MB，防止大内存机器压力过高。
   vm_max_mb: 8192
 
+# defaults 是所有服务器的默认 SSH 配置。单台服务器可以覆盖这些值。
 defaults:
+  # SSH 用户。当前脚本默认写 /root/scripts 和 root crontab，建议使用 root。
   user: root
+
+  # SSH 端口。
   port: 22
+
+  # SSH 密码。使用 SSH key 免密登录时填 ""。
   password: "CHANGE_ME"
+
+  # 默认是否启用服务器。单台机器可用 enabled: false 临时跳过。
   enabled: true
 
+# servers 是服务器清单。脚本会按这里的顺序排班。
 servers:
+  # name 只用于日志展示，建议包含主机名或业务名。
+  # host 是服务器 IP 或域名。
   - name: pressure-node-01
     host: 192.0.2.11
 
@@ -64,10 +95,12 @@ servers:
 
   - name: pressure-node-03
     host: 192.0.2.13
+    # password: "" 表示这台机器使用 SSH key 免密登录。
     password: ""
 
   - name: pressure-node-04
     host: 192.0.2.14
+    # enabled: false 表示保留配置但本次跳过部署。
     enabled: false
 ```
 
@@ -119,25 +152,56 @@ tail -f /var/log/load_stress.log
 假设要给 4 台服务器排定夜间压测，其中 3 台启用、1 台暂时跳过：
 
 ```yaml
+# settings 是运行策略。以后改压测窗口、并发数量、压测时长和压测强度，优先改这里。
 settings:
+  # 允许启动压测的开始时间，格式固定为 HH:MM。
   window_start: "02:00"
+
+  # 允许启动压测的结束时间。脚本不会安排 04:00 或之后启动。
   window_end: "04:00"
+
+  # 每隔多少分钟安排一批机器。
   slot_minutes: 15
+
+  # 每一批最多同时启动多少台机器，避免所有机器同一时间打满。
   max_parallel_per_slot: 2
+
+  # 单台机器每次压测持续秒数。900 秒 = 15 分钟。
   duration_seconds: 900
+
+  # CPU 压测强度。2 表示使用 CPU 核数的一半；值越小压力越大，不能小于 1。
   cpu_divisor: 2
+
+  # 内存压测 worker 数。一般保持 1。
   vm_workers: 1
+
+  # 内存压测比例。15 表示使用总内存约 15%。
   vm_percent: 15
+
+  # 单个内存 worker 的最小内存，单位 MB。
   vm_min_mb: 256
+
+  # 单个内存 worker 的最大内存，单位 MB，防止大内存机器压力过高。
   vm_max_mb: 8192
 
+# defaults 是所有服务器的默认 SSH 配置。单台服务器可以覆盖这些值。
 defaults:
+  # SSH 用户。当前脚本默认写 /root/scripts 和 root crontab，建议使用 root。
   user: root
+
+  # SSH 端口。
   port: 22
+
+  # SSH 密码。使用 SSH key 免密登录时填 ""。
   password: "CHANGE_ME"
+
+  # 默认是否启用服务器。单台机器可用 enabled: false 临时跳过。
   enabled: true
 
+# servers 是服务器清单。脚本会按这里的顺序排班。
 servers:
+  # name 只用于日志展示，建议包含主机名或业务名。
+  # host 是服务器 IP 或域名。
   - name: pressure-node-01
     host: 192.0.2.11
 
@@ -146,10 +210,12 @@ servers:
 
   - name: pressure-node-03
     host: 192.0.2.13
+    # password: "" 表示这台机器使用 SSH key 免密登录。
     password: ""
 
   - name: pressure-node-04
     host: 192.0.2.14
+    # enabled: false 表示保留配置但本次跳过部署。
     enabled: false
 ```
 
