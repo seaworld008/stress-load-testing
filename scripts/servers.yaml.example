@@ -21,7 +21,10 @@ settings:
   # 单台机器每次压测持续秒数。900 秒 = 15 分钟。
   duration_seconds: 900
 
-  # CPU 压测强度。2 表示使用 CPU 核数的一半；值越小压力越大，不能小于 1。
+  # CPU 压测强度，计算公式为 CPU worker = CPU 核数 / cpu_divisor，结果向下取整，最少 1 个。
+  # cpu_divisor: 2 表示大约使用一半 CPU，例如 4 核会启动 2 个 CPU worker。
+  # cpu_divisor: 3 表示压力更小，例如 4 核会启动 1 个 CPU worker，12 核会启动 4 个。
+  # 这个值越大 CPU 压力越小，越小 CPU 压力越大，不能小于 1。
   cpu_divisor: 2
 
   # 内存压测 worker 数。一般保持 1。
